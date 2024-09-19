@@ -231,9 +231,9 @@ int handle_request(Request* request) {
 int main(int argc, char *argv[]) {
     printf("Starting server\n");
 
-    const int port = 8080;
-    const int backlog = 10;
-    const int buffer_size = 1024;
+    const int port = atoi(argv[1]);
+    const int backlog = atoi(argv[2]);
+    const int buffer_size = atoi(argv[3]);
 
     signal(SIGINT, handle_signal);
 

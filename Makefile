@@ -1,6 +1,10 @@
+Port = 8080
+Backlog = 10
+BufferSize = 1024
+
 build:
 	gcc *.c -o main
 
 run:
-	./main
+	./main $(Port) $(Backlog) $(BufferSize)
 
