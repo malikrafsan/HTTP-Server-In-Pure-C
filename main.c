@@ -9,6 +9,11 @@
 #include <arpa/inet.h>
 
 typedef struct {
+    char* data;
+    int length;
+} Bytes;
+
+typedef struct {
     char* key;
     char* value;
 } Header;
@@ -26,10 +31,24 @@ typedef struct {
     char* body;
 } Request;
 
+typedef struct {
+    char* version;
+    char* status;
+    Headers headers;
+    Bytes body;
+} Response;
+
 int server_socket_id;
 int client_socket_id;
 char* request_buffer;
 Request* request;
+Response* response;
+
+void free_bytes(Bytes* bytes) {
+    if (bytes->data != NULL) {
+        free(bytes->data);
+    }
+}
 
 void free_request(Request* request) {
     free(request->method);
@@ -39,8 +58,15 @@ void free_request(Request* request) {
         free(request->headers.arr_header[i].key);
         free(request->headers.arr_header[i].value);
     }
+    free(request->headers.arr_header);
     free(request->body);
     free(request);
+}
+
+void free_response(Response* response) {
+    free(response->headers.arr_header);
+    free_bytes(&response->body);
+    free(response);
 }
 
 void clear_memory() {
@@ -234,7 +260,25 @@ void get_mime_type(char* file_path, char* mime_type) {
     }
 }
 
-int handle_get_request(Request* request) {
+void send_response(Response* response) {
+    char response_header[1024];
+    sprintf(response_header, "%s %s\r\n", response->version, response->status);
+
+    for (int i = 0; i < response->headers.headers_count; i++) {
+        strcat(response_header, response->headers.arr_header[i].key);
+        strcat(response_header, ": ");
+        strcat(response_header, response->headers.arr_header[i].value);
+        strcat(response_header, "\r\n");
+    }
+    strcat(response_header, "\r\n");
+
+    write(client_socket_id, response_header, strlen(response_header));
+    if (response->body.length != 0) {
+        write(client_socket_id, response->body.data, response->body.length);
+    }
+}
+
+int handle_get_request(Request* request, Response* response) {
     char file_path[100];
     get_file_path(request->path, file_path);
 
@@ -243,32 +287,31 @@ int handle_get_request(Request* request) {
         return -1;
     }
 
-    char response_header[100];
     char mime_type[20];
     get_mime_type(file_path, mime_type);
 
-    sprintf(response_header, "HTTP/1.1 200 OK\r\nContent-Type: %s\r\n\r\n", mime_type);
-    int header_length = strlen(response_header);
+    response->version = "HTTP/1.1";
+    response->status = "200 OK";
+    response->headers.headers_count = 1;
+    response->headers.arr_header = (Header*)malloc(sizeof(Header) * response->headers.headers_count);
+    response->headers.arr_header[0].key = "Content-Type";
+    response->headers.arr_header[0].value = mime_type;
 
     fseek(file, 0, SEEK_END);
     long file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
 
-    char* response = (char*)malloc(header_length + file_size);
-    memcpy(response, response_header, header_length);
-
-    fread(response + header_length, 1, file_size, file);
+    response->body.data = (char*)malloc(file_size);
+    response->body.length = file_size;
+    fread(response->body.data, 1, file_size, file);
     fclose(file);
-
-    write(client_socket_id, response, header_length + file_size);
-    free(response);    
 
     return 0;
 }
 
-int handle_request(Request* request) {
+int handle_request(Request* request, Response* response) {
     if (strcmp(request->method, "GET") == 0) {
-        return handle_get_request(request);
+        return handle_get_request(request, response);
     }
 
     return -1;
@@ -305,27 +348,48 @@ int main(int argc, char *argv[]) {
         }
 
         request = (Request*)malloc(sizeof(Request));
+        response = (Response*)malloc(sizeof(Response));
+
         int res_parse_request = parse_request(request_buffer, request);
         if (res_parse_request < 0) {
             printf("Request not parsed\n");
-            write(client_socket_id, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n", 46);
+
+            response->version = "HTTP/1.1";
+            response->status = "400 Bad Request";
+            response->headers.headers_count = 1;
+            response->headers.arr_header = (Header*)malloc(sizeof(Header) * response->headers.headers_count);
+            response->headers.arr_header[0].key = "Content-Length";
+            response->headers.arr_header[0].value = "0";
+
+            send_response(response);
             close(client_socket_id);
+            free_request(request);
             continue;
         }
         free(request_buffer);
 
-        int res_handle_request = handle_request(request);
+        int res_handle_request = handle_request(request, response);
         if (res_handle_request < 0) {
             printf("Request not handled\n");
-            write(client_socket_id, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n", 46);
+
+            response->version = "HTTP/1.1";
+            response->status = "400 Bad Request";
+            response->headers.headers_count = 1;
+            response->headers.arr_header = (Header*)malloc(sizeof(Header) * response->headers.headers_count);
+            response->headers.arr_header[0].key = "Content-Length";
+            response->headers.arr_header[0].value = "0";
+
+            send_response(response);
             close(client_socket_id);
             free_request(request);
             continue;
         }
 
-        printf("Closing socket\n");
+        send_response(response);
+
         close(client_socket_id);
         free_request(request);
+        free_response(response);
     }
 
     return 0;
