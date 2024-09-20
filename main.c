@@ -9,10 +9,20 @@
 #include <arpa/inet.h>
 
 typedef struct {
+    char* key;
+    char* value;
+} Header;
+
+typedef struct {
+    Header* arr_header;
+    int headers_count;
+} Headers;
+
+typedef struct {
     char* method;
     char* path;
     char* version;
-    char* headers;
+    Headers headers;
     char* body;
 } Request;
 
@@ -25,7 +35,10 @@ void free_request(Request* request) {
     free(request->method);
     free(request->path);
     free(request->version);
-    free(request->headers);
+    for (int i = 0; i < request->headers.headers_count; i++) {
+        free(request->headers.arr_header[i].key);
+        free(request->headers.arr_header[i].value);
+    }
     free(request->body);
     free(request);
 }
@@ -132,18 +145,51 @@ int parse_request(char* request_buffer, Request* request) {
     
     const char* headers_startptr = version_endptr + 2;
     const char* headers_endptr = strstr(headers_startptr, "\r\n\r\n");
+    char* headers;
     if (headers_endptr == NULL) {
-        request->headers = copy_str(
+        headers = copy_str(
             headers_startptr, 
             strlen(headers_startptr));
         request->body = "";
     } else {
-        request->headers = copy_str(
+        headers = copy_str(
             headers_startptr, 
             headers_endptr - headers_startptr);
         request->body = copy_str(
             headers_endptr + 4, 
             strlen(headers_endptr + 4));
+    }
+
+    int headers_count = 0;
+    const char* header_startptr = headers;
+    while (header_startptr != NULL) {
+        const char* header_endptr = strstr(header_startptr, "\r\n");
+        if (header_endptr == NULL) {
+            break;
+        }
+
+        headers_count++;
+        header_startptr = header_endptr + 2;
+    }
+
+    request->headers.headers_count = headers_count;
+    request->headers.arr_header = (Header*)malloc(headers_count * sizeof(Header));
+    header_startptr = headers;
+    for (int i = 0; i < headers_count; i++) {
+        const char* header_endptr = strstr(header_startptr, "\r\n");
+        const char* colon_ptr = strchr(header_startptr, ':');
+        if (colon_ptr == NULL) {
+            return -1;
+        }
+
+        request->headers.arr_header[i].key = copy_str(
+            header_startptr, 
+            colon_ptr - header_startptr);
+        request->headers.arr_header[i].value = copy_str(
+            colon_ptr + 2, 
+            header_endptr - colon_ptr - 2);
+
+        header_startptr = header_endptr + 2;
     }
 
     return 0;
